@@ -1,0 +1,102 @@
+cat /dev/null > filename.txt            to remove all text at once 
+==========================================================================
+
+touch subdomains.txt
+touch working_sni.txt
+touch nonworking_sni.txt
+--------------------------------------------------
+
+paste subdomains in subdomains.txt
+
+----------------------------------------------------------
+
+nano check_subdomains_xargs.sh
+--> (script)
+#!/bin/bash
+# File containing subdomains to check
+subdomain_file="subdomains.txt"
+
+# Output files for working and non‐working hosts
+working_file="working_sni.txt"
+nonworking_file="nonworking_sni.txt"
+
+# Clear the output files if they exist
+> "$working_file"
+> "$nonworking_file"
+
+# Temporary file to store results
+temp_results=$(mktemp)
+
+# Function to check a single subdomain
+check_subdomain() {
+    local subdomain url response1 response2 response
+    subdomain=$(echo "$1" | xargs)  # trim whitespace
+    [ -z "$subdomain" ] && exit 0
+
+    # Prepend "https://" if not already present
+    if [[ "$subdomain" != http*://* ]]; then
+        url="https://$subdomain"
+    else
+        url="$subdomain"
+    fi
+
+    # First attempt: GET request (following redirects)
+    response1=$(curl -k -L -s -o /dev/null -w "%{http_code}" \
+         --connect-timeout 5 --max-time 10 \
+         -A "Mozilla/5.0" "$url")
+
+    # Second attempt: HEAD request as fallback
+    response2=$(curl -k -I -s -o /dev/null -w "%{http_code}" \
+         --connect-timeout 5 --max-time 10 \
+         -A "Mozilla/5.0" "$url")
+
+    # If the GET attempt returns a valid code (not "000"), use it;
+    # otherwise, if the HEAD attempt is valid, use that; else, mark as "000".
+    if [ "$response1" != "000" ]; then
+         response="$response1"
+    elif [ "$response2" != "000" ]; then
+         response="$response2"
+    else
+         response="000"
+    fi
+
+    # Output CSV: subdomain,response
+    echo "$subdomain,$response"
+}
+export -f check_subdomain
+
+# Use xargs to run check_subdomain in parallel (-P 10 for 10 parallel jobs)
+cat "$subdomain_file" | xargs -I {} -P 10 bash -c 'check_subdomain "{}"' >> "$temp_results"
+
+# Separate results: if response is "000", consider non-working; otherwise working.
+while IFS=',' read -r sub resp; do
+    if [ "$resp" = "000" ]; then
+         echo "$sub" >> "$nonworking_file"
+    else
+         echo "$sub" >> "$working_file"
+    fi
+done < "$temp_results"
+
+rm "$temp_results"
+
+echo "Working subdomains saved in $working_file"
+echo "Non-working subdomains saved in $nonworking_file"
+
+
+
+
+
+-----------------------------------------
+
+
+
+to execute script use
+chmod +x check_subdomains_xargs.sh
+
+
+------------------------------------------------------
+
+
+./check_subdomains_xargs.sh
+
+------------------------------
